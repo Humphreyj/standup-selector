@@ -43,9 +43,17 @@ export default {
     const rounds = ref([])
     const winner = ref(null)
 
+    // Constants for bye rounds
+    const BYE_WIN_ROLL = 20
+    const BYE_LOSE_ROLL = 0
+
     const initializeBracket = () => {
-      // Shuffle participants
-      const shuffled = [...props.participants].sort(() => Math.random() - 0.5)
+      // Fisher-Yates shuffle for proper randomness
+      const shuffled = [...props.participants]
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+      }
       
       // Create first round matches
       const firstRound = []
@@ -64,8 +72,8 @@ export default {
           firstRound.push({
             player1: shuffled[i],
             player2: null,
-            roll1: 20,
-            roll2: 0,
+            roll1: BYE_WIN_ROLL,
+            roll2: BYE_LOSE_ROLL,
             winner: shuffled[i],
             completed: true
           })
@@ -75,8 +83,10 @@ export default {
       rounds.value = [firstRound]
       
       // Create empty subsequent rounds
-      let numMatches = Math.ceil(firstRound.length / 2)
-      while (numMatches >= 1) {
+      // Each round needs ceil(winners/2) matches to accommodate all winners
+      let numWinners = firstRound.length
+      while (numWinners > 1) {
+        const numMatches = Math.ceil(numWinners / 2)
         const round = []
         for (let i = 0; i < numMatches; i++) {
           round.push({
@@ -89,7 +99,7 @@ export default {
           })
         }
         rounds.value.push(round)
-        numMatches = Math.ceil(numMatches / 2)
+        numWinners = numMatches
       }
     }
 
@@ -136,16 +146,6 @@ export default {
         nextMatch.player1 = winnerName
       } else {
         nextMatch.player2 = winnerName
-      }
-
-      // Check if this was the final match
-      if (nextRoundIndex === rounds.value.length - 1 && nextMatch.player1 && nextMatch.player2) {
-        // Auto-start final match after a short delay
-        setTimeout(() => {
-          if (!nextMatch.completed) {
-            rollDice(nextRoundIndex, nextMatchIndex)
-          }
-        }, 1000)
       }
     }
 

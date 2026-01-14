@@ -59,10 +59,7 @@
       }
   
       const start = () => {
-        if (participants.value.length < 2) {
-          alert('Please add at least 2 participants!')
-          return
-        }
+        // Button is only visible when participants.length >= 2, so no need to check
         emit('start-tournament', participants.value)
       }
   

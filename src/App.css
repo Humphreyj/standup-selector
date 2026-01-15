@@ -1,0 +1,70 @@
+/* D&D Color Palette Variables */
+:root {
+  /* Burgundy/Crimson - Primary colors */
+  --burgundy-dark: #8B1A1A;
+  --burgundy-medium: #A52A2A;
+  --crimson: #DC143C;
+  
+  /* Parchment/Tan - Backgrounds */
+  --parchment-light: #F4E8D0;
+  --parchment-medium: #E8D5B7;
+  --tan: #D2B48C;
+  
+  /* Dark Brown/Sepia - Text and darker elements */
+  --brown-darkest: #3E2723;
+  --brown-dark: #4E342E;
+  --brown-medium: #5D4037;
+  
+  /* Gold/Amber - Highlights and accents */
+  --gold: #D4AF37;
+  --gold-bright: #FFD700;
+  --amber: #FFA500;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  background: linear-gradient(135deg, var(--burgundy-dark) 0%, var(--brown-darkest) 100%);
+  color: var(--parchment-light);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.App {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+/* Text shadows for depth */
+h1, h2, h3 {
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--brown-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--burgundy-medium);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--crimson);
+}

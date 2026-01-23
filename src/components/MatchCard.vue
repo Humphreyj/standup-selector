@@ -96,12 +96,21 @@ export default {
     var(--parchment) 0%,
     var(--parchment-2) 100%
   );
+  color: var(--ink);
   border-radius: 15px;
-  padding: 1.5rem;
+  padding: 1rem;
   box-shadow: 0 8px 24px var(--shadow);
   transition: all 0.3s ease;
   position: relative;
   border: 1px solid rgba(212, 175, 55, 0.25);
+
+  /* Grid-friendly card sizing */
+  width: 300px;
+  height: 300px;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
 .match-card:hover {
@@ -135,54 +144,61 @@ export default {
 }
 
 .player {
-  padding: 1rem;
+  padding: 0.75rem;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.45);
-  margin: 0.5rem 0;
+  margin: 0;
   transition: all 0.3s ease;
+  color: rgba(36, 23, 18, 0.92);
 }
 
 .player.winner {
   background: linear-gradient(135deg, var(--emerald) 0%, #16613a 100%);
   color: var(--parchment);
   font-weight: bold;
-  transform: scale(1.05);
+  transform: scale(1.01);
 }
 
 .player-name {
-  font-size: 1.1rem;
+  word-break: break-word;
+}
+
+.player-name {
+  font-size: 1rem;
   font-weight: 600;
   margin-bottom: 0.5rem;
+  color: var(--ink);
 }
 
 .dice-roll {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: bold;
   margin-top: 0.5rem;
+  color: rgba(36, 23, 18, 0.92);
 }
 
 .rolling-text {
-  opacity: 0.75;
+  opacity: 0.9;
 }
 
 .vs {
   text-align: center;
   font-weight: bold;
   color: var(--burgundy);
-  font-size: 1.2rem;
+  font-size: 1rem;
   margin: 0.5rem 0;
 }
 
 .roll-btn {
   width: 100%;
-  padding: 12px;
+  padding: 10px;
   background: linear-gradient(135deg, var(--gold) 0%, var(--gold-2) 100%);
   color: var(--ink);
   border: none;
   border-radius: 10px;
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: bold;
-  margin-top: 1rem;
+  margin-top: 0.75rem;
 }
 
 .roll-btn:disabled {
@@ -198,8 +214,8 @@ export default {
 
 .match-winner {
   text-align: center;
-  margin-top: 1rem;
-  padding: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem;
   background: linear-gradient(135deg, var(--emerald) 0%, #16613a 100%);
   color: var(--parchment);
   border-radius: 8px;

@@ -1,6 +1,6 @@
 <template>
   <div class="tournament-bracket">
-    <div v-if="winner" class="winner-announcement">
+    <div v-if="winner" ref="winnerEl" class="winner-announcement">
       <h1 class="winner-title">🎉 Tournament Winner! 🎉</h1>
       <div class="winner-name">{{ getName(winner) }}</div>
       <p class="winner-text">Will lead the next standup!</p>
@@ -70,6 +70,7 @@
         v-for="(round, roundIndex) in rounds"
         :key="roundIndex"
         class="round"
+        :ref="(el) => setRoundEl(el, roundIndex)"
       >
         <h3 class="round-title">{{ getRoundName(roundIndex) }}</h3>
         <div class="matches">
@@ -89,7 +90,7 @@
 </template>
 
 <script>
-import { ref, onMounted, watch, onBeforeUnmount } from "vue";
+import { ref, onMounted, watch, onBeforeUnmount, nextTick } from "vue";
 import MatchCard from "./MatchCard.vue";
 
 export default {
@@ -108,6 +109,12 @@ export default {
     const rounds = ref([]);
     const winner = ref(null);
 
+    // Scrolling targets
+    const winnerEl = ref(null);
+    const roundEls = ref([]);
+    const lastScrolledRoundIndex = ref(null);
+    const suppressAutoScrollUntilTs = ref(0);
+
     const currentMatch = ref(null); // { roundIndex, matchIndex } | null
     const rollingMatch = ref(null); // { roundIndex, matchIndex } | null
 
@@ -121,9 +128,28 @@ export default {
 
     let pendingTimeout = null;
 
-    // Constants for bye rounds
-    const BYE_WIN_ROLL = 20;
-    const BYE_LOSE_ROLL = 0;
+    const setRoundEl = (el, idx) => {
+      // Vue will also call this with null during updates/unmounts.
+      if (!el) return;
+      roundEls.value[idx] = el;
+    };
+
+    const markUserScrollActivity = () => {
+      // If the user scrolls, don't fight them for a short window.
+      suppressAutoScrollUntilTs.value = Date.now() + 1200;
+    };
+
+    const shouldAutoScrollNow = () =>
+      Date.now() >= suppressAutoScrollUntilTs.value;
+
+    const safeScrollIntoView = (el, block = "center") => {
+      if (!el) return;
+      try {
+        el.scrollIntoView({ behavior: "smooth", block, inline: "nearest" });
+      } catch {
+        el.scrollIntoView();
+      }
+    };
 
     const getName = (p) => (p && typeof p === "object" ? p.name : p);
     const getId = (p) => (p && typeof p === "object" ? p.id : p);
@@ -158,6 +184,16 @@ export default {
       expectedRealMatches: 0, // players - 1 in single-elimination
       realMatchesRolled: 0,
       byesApplied: 0,
+    });
+
+    // Optional special-case for odd player counts:
+    // instead of a bye, we do a "preliminary" match where the odd player
+    // faces the winner of Match 0.
+    // This guarantees we never end up with a later-round half-filled match that
+    // can stall the bracket.
+    const prelim = ref({
+      enabled: true,
+      oddPlayer: null,
     });
 
     const describeMatch = (roundIndex, matchIndex, match) => {
@@ -204,37 +240,46 @@ export default {
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
 
-      // Create first round matches
-      const firstRound = [];
-      for (let i = 0; i < shuffled.length; i += 2) {
-        if (i + 1 < shuffled.length) {
-          // Avoid self-matchups by id (shouldn't happen, but keep it bulletproof)
-          let p1 = shuffled[i];
-          let p2 = shuffled[i + 1];
-          if (getId(p1) === getId(p2) && i + 2 < shuffled.length) {
-            p2 = shuffled[i + 2];
-            shuffled[i + 2] = shuffled[i + 1];
-          }
+      dbg("initializeBracket:cleanedParticipants", {
+        count: cleaned.length,
+        participants: cleaned.map((p) => ({ id: getId(p), name: getName(p) })),
+      });
 
-          firstRound.push({
-            player1: p1,
-            player2: p2,
-            roll1: null,
-            roll2: null,
-            winner: null,
-            completed: false,
-          });
-        } else {
-          // Bye for odd number of participants
-          firstRound.push({
-            player1: shuffled[i],
-            player2: null,
-            roll1: BYE_WIN_ROLL,
-            roll2: BYE_LOSE_ROLL,
-            winner: shuffled[i],
-            completed: true,
-          });
+      // If odd number of players, pull one out as the "odd player" to be used in
+      // a preliminary match against the winner of Match 0.
+      // (This is the behavior you requested: "first matchup winner fights the odd player".)
+      const shuffledForRound1 = [...shuffled];
+      if (prelim.value.enabled && shuffledForRound1.length % 2 === 1) {
+        prelim.value.oddPlayer = shuffledForRound1.pop();
+        dbg("initializeBracket:prelimEnabled", {
+          oddPlayer: {
+            id: getId(prelim.value.oddPlayer),
+            name: getName(prelim.value.oddPlayer),
+          },
+        });
+      } else {
+        prelim.value.oddPlayer = null;
+      }
+
+      // Create first round matches (always even count now)
+      const firstRound = [];
+      for (let i = 0; i < shuffledForRound1.length; i += 2) {
+        // Avoid self-matchups by id (shouldn't happen, but keep it bulletproof)
+        let p1 = shuffledForRound1[i];
+        let p2 = shuffledForRound1[i + 1];
+        if (getId(p1) === getId(p2) && i + 2 < shuffledForRound1.length) {
+          p2 = shuffledForRound1[i + 2];
+          shuffledForRound1[i + 2] = shuffledForRound1[i + 1];
         }
+
+        firstRound.push({
+          player1: p1,
+          player2: p2,
+          roll1: null,
+          roll2: null,
+          winner: null,
+          completed: false,
+        });
       }
 
       rounds.value = [firstRound];
@@ -252,13 +297,34 @@ export default {
         expectedRealMatches: tournamentStats.value.expectedRealMatches,
       });
 
-      // Create empty subsequent rounds
-      // Each round needs ceil(winners/2) matches to accommodate all winners
-      // Winners from a round = number of matches in that round (each match yields one winner).
-      // So the number of players advancing is firstRound.length, and next round match count is ceil(players/2).
-      let numAdvancingPlayers = firstRound.length;
-      while (numAdvancingPlayers > 1) {
-        const numMatches = Math.ceil(numAdvancingPlayers / 2);
+      dbg("initializeBracket:firstRoundMatchups", {
+        matchups: firstRound.map((m, i) => ({
+          matchIndex: i,
+          player1: m.player1
+            ? { id: getId(m.player1), name: getName(m.player1) }
+            : null,
+          player2: m.player2
+            ? { id: getId(m.player2), name: getName(m.player2) }
+            : null,
+          completed: !!m.completed,
+        })),
+      });
+
+      // Create empty subsequent rounds.
+      // Important invariant:
+      // - For a normal even-size field (no prelim), each round has exactly half as many matches.
+      // - For the odd-size "prelim" scheme, Round 2 has one extra match slot to host
+      //   (winner of match0) vs (odd player). That makes the number of *winners coming out
+      //   of Round 1* effectively: firstRound.length + 1.
+      //   From there onward, match counts are ceil(advancing/2).
+
+      let advancingWinners = firstRound.length;
+      if (prelim.value.enabled && prelim.value.oddPlayer) {
+        advancingWinners += 1;
+      }
+
+      while (advancingWinners > 1) {
+        const numMatches = Math.ceil(advancingWinners / 2);
         const round = [];
         for (let i = 0; i < numMatches; i++) {
           round.push({
@@ -271,14 +337,64 @@ export default {
           });
         }
         rounds.value.push(round);
-        // Each match produces exactly one winner; that becomes the number of advancing players.
-        numAdvancingPlayers = numMatches;
+        advancingWinners = numMatches;
       }
 
       dbg("initializeBracket:rounds", {
         totalRounds: rounds.value.length,
         matchesPerRound: rounds.value.map((r) => r.length),
       });
+    };
+
+    const maybeSchedulePrelimMatch = () => {
+      // If no prelim odd player, nothing to do.
+      if (!prelim.value.oddPlayer) return;
+      if (!rounds.value[0] || !rounds.value[0][0]) return;
+
+      const match0 = rounds.value[0][0];
+      if (!match0.completed || !match0.winner) return;
+
+      // We attach the prelim match into round 1, match 0, slot player2.
+      // Slot player1 is already winner of match0 (from normal advanceWinner).
+      const r1 = rounds.value[1];
+      if (!r1 || !r1[0]) return;
+      const target = r1[0];
+
+      // Only fill if it's empty (don't overwrite if something else is there).
+      if (!target.player2) {
+        target.player2 = prelim.value.oddPlayer;
+        // Consume it so we don't keep trying to schedule over and over.
+        prelim.value.oddPlayer = null;
+        dbg("prelim:scheduled", {
+          roundIndex: 1,
+          matchIndex: 0,
+          oddPlayer: target.player2
+            ? `${getName(target.player2)} (${getId(target.player2)})`
+            : null,
+          against: target.player1
+            ? `${getName(target.player1)} (${getId(target.player1)})`
+            : null,
+        });
+      }
+    };
+
+    const autoAdvanceIfSinglePlayer = (roundIndex, matchIndex) => {
+      const match = rounds.value?.[roundIndex]?.[matchIndex];
+      if (!match || match.completed) return false;
+
+      const hasP1 = !!match.player1;
+      const hasP2 = !!match.player2;
+      if (hasP1 === hasP2) return false; // both present (real match) or both missing
+
+      const adv = match.player1 || match.player2;
+      match.winner = adv;
+      match.completed = true;
+      dbg(
+        "autoAdvance:singlePlayer",
+        describeMatch(roundIndex, matchIndex, match)
+      );
+      advanceWinner(roundIndex, matchIndex, adv);
+      return true;
     };
 
     const rollD20 = () => {
@@ -295,8 +411,8 @@ export default {
       // If a match ever ends up being the same participant (by id), auto-advance.
       // This should be impossible with unique ids, but it keeps us safe.
       if (getId(match.player1) === getId(match.player2)) {
-        match.roll1 = BYE_WIN_ROLL;
-        match.roll2 = BYE_LOSE_ROLL;
+        match.roll1 = 20;
+        match.roll2 = 1;
         match.winner = match.player1;
         match.completed = true;
 
@@ -377,60 +493,6 @@ export default {
       return null;
     };
 
-    const findNextBye = () => {
-      // IMPORTANT:
-      // Byes are only valid in the *first* round (created during initialization when the
-      // participant count is odd). In later rounds, an "incomplete" match (one player
-      // present, one missing) usually means we're still waiting for the opponent to
-      // arrive from another unfinished match in the previous round.
-      //
-      // Auto-advancing these later-round incomplete matches causes premature winners
-      // (e.g., an 8-person bracket finishing after a single roll).
-      const r = 0;
-      if (!rounds.value[r]) return null;
-      for (let m = 0; m < rounds.value[r].length; m++) {
-        const match = rounds.value[r][m];
-        if (match.completed) continue;
-        const hasP1 = !!match.player1;
-        const hasP2 = !!match.player2;
-        if ((hasP1 && !hasP2) || (!hasP1 && hasP2)) {
-          return { roundIndex: r, matchIndex: m };
-        }
-      }
-      return null;
-    };
-
-    const applyBye = (roundIndex, matchIndex) => {
-      const match = rounds.value[roundIndex][matchIndex];
-      if (!match || match.completed) return;
-
-      dbg("bye:apply", describeMatch(roundIndex, matchIndex, match));
-
-      const hasP1 = !!match.player1;
-      const hasP2 = !!match.player2;
-      if (hasP1 && !hasP2) {
-        tournamentStats.value.byesApplied++;
-        match.roll1 = BYE_WIN_ROLL;
-        match.roll2 = BYE_LOSE_ROLL;
-        match.winner = match.player1;
-        match.completed = true;
-
-        dbg("bye:complete", describeMatch(roundIndex, matchIndex, match));
-
-        advanceWinner(roundIndex, matchIndex, match.winner);
-      } else if (!hasP1 && hasP2) {
-        tournamentStats.value.byesApplied++;
-        match.roll1 = BYE_LOSE_ROLL;
-        match.roll2 = BYE_WIN_ROLL;
-        match.winner = match.player2;
-        match.completed = true;
-
-        dbg("bye:complete", describeMatch(roundIndex, matchIndex, match));
-
-        advanceWinner(roundIndex, matchIndex, match.winner);
-      }
-    };
-
     const runTournamentAutomatically = async () => {
       if (autoRunInProgress.value) return;
       if (!tournamentStarted.value) return;
@@ -452,25 +514,32 @@ export default {
           !autoRunPaused.value &&
           !winner.value
         ) {
-          // Handle byes, but only one per tick so the speed setting still matters.
-          const bye = findNextBye();
-          if (bye) {
-            dbg("autorun:nextBye", bye);
-            currentMatch.value = bye;
-            rollingMatch.value = bye;
-            await sleep(200);
-            if (myToken !== runToken.value) break;
-
-            applyBye(bye.roundIndex, bye.matchIndex);
-            rollingMatch.value = null;
-            await sleep(autoRunDelayMs.value);
-            continue;
-          }
-
           const next = findNextRunnableMatch();
           if (!next) {
-            // No match is currently runnable. This can happen briefly while the bracket fills.
-            // Yield and try again.
+            // If we're stalled, try to resolve any single-player matches (byes / half-filled)
+            // so the bracket can continue. This is a safe fallback and also covers edge cases
+            // where a round was sized with an extra slot (prelim scheme).
+            let advanced = false;
+            for (let r = 0; r < rounds.value.length && !advanced; r++) {
+              for (let m = 0; m < rounds.value[r].length && !advanced; m++) {
+                advanced = autoAdvanceIfSinglePlayer(r, m);
+              }
+            }
+
+            if (advanced) {
+              await sleep(0);
+              continue;
+            }
+
+            // Nothing is runnable yet; we're waiting for bracket slots to fill.
+            const firstIncompleteRound = rounds.value.findIndex((round) =>
+              round.some((m) => !m.completed)
+            );
+            if (firstIncompleteRound >= 0) {
+              dbg("autorun:waiting", {
+                firstIncompleteRound,
+              });
+            }
             currentMatch.value = null;
             rollingMatch.value = null;
             await sleep(50);
@@ -481,7 +550,6 @@ export default {
 
           currentMatch.value = next;
           rollingMatch.value = next;
-          // Pre-roll anticipation scales with speed so it doesn't feel disconnected.
           await sleep(Math.max(120, Math.floor(autoRunDelayMs.value * 0.6)));
           if (myToken !== runToken.value) break;
 
@@ -552,6 +620,10 @@ export default {
         winner: `${getName(winnerName)} (${getId(winnerName)})`,
       });
 
+      // If we're using the prelim scheme, drop the odd player into round 1 match 0
+      // as soon as match 0 has a winner.
+      maybeSchedulePrelimMatch();
+
       // If auto-run is enabled, keep the runner progressing as soon as new players arrive.
       // Use a macrotask so we don't create a microtask avalanche that ignores delays.
       setTimeout(() => runTournamentAutomatically(), 0);
@@ -597,6 +669,38 @@ export default {
 
     onMounted(() => {
       initializeBracket();
+
+      // Detect user scroll so we don't yank the page while they're inspecting.
+      window.addEventListener("wheel", markUserScrollActivity, {
+        passive: true,
+      });
+      window.addEventListener("touchmove", markUserScrollActivity, {
+        passive: true,
+      });
+    });
+
+    // Auto-scroll to the round currently in progress.
+    watch(
+      currentMatch,
+      async (cm) => {
+        if (!cm) return;
+        if (!tournamentStarted.value) return;
+        if (!shouldAutoScrollNow()) return;
+        if (lastScrolledRoundIndex.value === cm.roundIndex) return;
+
+        lastScrolledRoundIndex.value = cm.roundIndex;
+        await nextTick();
+        const el = roundEls.value?.[cm.roundIndex];
+        safeScrollIntoView(el, "center");
+      },
+      { deep: true }
+    );
+
+    // Auto-scroll to the winner banner when a winner is declared.
+    watch(winner, async (w) => {
+      if (!w) return;
+      await nextTick();
+      safeScrollIntoView(winnerEl.value, "start");
     });
 
     const startTournament = () => {
@@ -623,6 +727,9 @@ export default {
       currentMatch.value = null;
       rollingMatch.value = null;
       clearPendingSleep();
+
+      window.removeEventListener("wheel", markUserScrollActivity);
+      window.removeEventListener("touchmove", markUserScrollActivity);
     });
 
     return {
@@ -631,6 +738,8 @@ export default {
       rollDice,
       getRoundName,
       getName,
+      winnerEl,
+      setRoundEl,
       autoRunEnabled,
       autoRunPaused,
       autoRunDelayMs,
@@ -699,10 +808,11 @@ export default {
 .bracket-container {
   display: flex;
   flex-direction: column;
-  gap: 3rem;
-  overflow-x: auto;
+  gap: 2.25rem;
+  overflow-x: hidden;
   padding: 2rem;
   justify-content: center;
+  align-items: center;
 }
 
 .controls {
@@ -758,7 +868,25 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  min-width: 300px;
+  width: 100%;
+  max-width: 1200px;
+}
+
+/* Inverted pyramid: later rounds get progressively narrower and stay centered */
+.round:nth-child(3) {
+  max-width: 1100px;
+}
+
+.round:nth-child(4) {
+  max-width: 900px;
+}
+
+.round:nth-child(5) {
+  max-width: 740px;
+}
+
+.round:nth-child(6) {
+  max-width: 600px;
 }
 
 .round-title {
@@ -771,20 +899,26 @@ export default {
 
 .matches {
   display: flex;
-  flex-direction: column;
-  gap: 2rem;
-  justify-content: space-around;
-  flex: 1;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .matches {
+    grid-template-columns: repeat(auto-fill, 184px);
+    gap: 0.85rem;
+  }
 }
 
 @media (max-width: 768px) {
   .bracket-container {
     padding: 1rem;
-    gap: 2rem;
+    gap: 1.75rem;
   }
 
   .round {
-    min-width: 250px;
+    max-width: 100%;
   }
 
   .winner-title {
